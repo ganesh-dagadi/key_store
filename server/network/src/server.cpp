@@ -1,4 +1,7 @@
 #include "server.h"
+#include "serverErrors.h"
+#include "parser.h"
+#include "engine.h"
 #include <sys/socket.h>
 #include <cerrno>
 #include <system_error>
@@ -6,10 +9,55 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <cstring>
+#include <memory>
+
 
 void printError() {
     std::error_code ec(errno, std::generic_category());
     std::cerr << "Error (" << ec.value() << "): " << ec.message() << '\n';
+}
+
+int Connection::readExact(void* buf_ptr, int bytes_to_read) {
+    int bytes_read = 0;
+    char* buf = static_cast<char*>(buf_ptr);
+    while (bytes_read < bytes_to_read) {
+        int curr_read = read(this->getConnectionFd(), buf + bytes_read, bytes_to_read - bytes_read);
+        if(curr_read < 0) {
+            if (errno == EINTR) continue;
+            std::cerr << "Error reading from socket for client " << this->getAddress() << "\n";
+            printError();
+            return -1;
+        }
+
+        if (curr_read == 0) {
+            std::cerr << "Connection with " << this->getAddress() << " closed before complete read\n";
+            throw ConnectionException("Connection closed while reading");
+        }
+        bytes_read += curr_read;
+    }
+    return bytes_read;
+}
+
+int Connection::writeExact(void* buf_ptr, int bytes_to_write) {
+    int bytes_written = 0;
+    char* buf = static_cast<char*>(buf_ptr);
+    while (bytes_written < bytes_to_write) {
+        int curr_read = write(this->getConnectionFd(), buf + bytes_written, bytes_to_write - bytes_written);
+        if(curr_read < 0) {
+            if (errno == EINTR) continue;
+            std::cerr << "Error reading from socket for client " << this->getAddress() << "\n";
+            printError();
+            return -1;
+        }
+
+        if (curr_read == 0) {
+            std::cerr << "Connection with " << this->getAddress() << " closed before complete read\n";
+            return bytes_written;            
+        }
+        bytes_written += curr_read;
+    }
+    return bytes_written;
 }
 
 int Server::shutdownServer() {
@@ -83,16 +131,28 @@ int Server::beginServerListening() {
         char addr_str[IPV4_MAX_STR_LEN];
         inet_ntop(AF_INET, &(client_addr.sin_addr), addr_str, IPV4_MAX_STR_LEN);
         std::string addr_cpp_string(addr_str);
-        Connection newConnection(addr_cpp_string, ntohs(client_addr.sin_port));
+        Connection newConnection(addr_cpp_string, ntohs(client_addr.sin_port), client_fd);
         std::cout << "Client connected. ip: " << newConnection.getAddress() << " port: " << newConnection.getPort() << "\n";
 
-        std::string writeBuf = "Hello from server";
-        char readBuf[32]{};
-        read(client_fd, readBuf, 32);
-        std::string readStr(readBuf);
-        std::cout << "Client says: " << readStr << "\n";
-        write(client_fd, writeBuf.c_str(), 18);
-        close(client_fd);
+        while (true) {
+            try {
+                Command request_command = Parser::parse(newConnection);
+                if(request_command.op_code == Opcode::SET) std::cout << "SET command" << std::endl;
+                if(request_command.op_code == Opcode::GET) std::cout << "GET command" << std::endl;
+                if(request_command.set_ttl) std::cout << "TTL is set to " << request_command.ttl << std::endl;
+                else std::cout << "TTL not set" << std::endl;
+                std::cout << request_command.key << "is key \n";
+                std::cout << request_command.value << "is value \n";
+            } catch(const ConnectionException& e) {
+                std::cerr << "Connection closed with " << newConnection.getAddress() << "\n";
+                break;
+            }
+            catch (const ParsingError& e) {
+                std::cerr << e.what() << std::endl;
+                std::string res_body = "Error Parsing the Request";
+                Parser::returnResponse(400, res_body.data(), res_body.size(),newConnection);
+            }
+        }
     }
 }
 
@@ -102,5 +162,9 @@ std::string Connection::getAddress() {
 
 int Connection::getPort() {
     return this->client_port;
+}
+
+int Connection::getConnectionFd() {
+    return this->connection_fd;
 }
 

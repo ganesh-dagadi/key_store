@@ -30,15 +30,33 @@ int main() {
         die("connect");
     }
 
-    char msg[] = "hello";
-    write(fd, msg, strlen(msg));
+    uint8_t msg[24];
+    msg[0] = 0; // version
+    msg[1] = 0; // opcode
+    msg[2] = 32; // flag
+    msg[3] = 1; // flag
+    msg[4] = 0; //payloadlen
+    msg[5] = 0; //payload len
+    msg[6] = 0; //payload len
+    msg[7] = 16; //payload len
+    msg[8] = 0; // key len byte 1
+    msg[9] = 3; // key len byte 2
+    msg[10] = 'd'; //key
+    msg[11] = 'i'; //key
+    msg[12] = 'c'; //key
+    msg[13] = 0; // value_len byte 1
+    msg[14] = 0; // value_len byte 2
+    msg[15] = 0; // value_len byte 3
+    msg[16] = 3; // value_len byte 4
+    msg[17] = 'b'; // value
+    msg[18] = 'o'; // value
+    msg[19] = 'b'; // value
+    msg[20] = 0; //ttl
+    msg[21] = 0;//ttl
+    msg[22] = 0; //ttl
+    msg[23] = 50; //ttl
+    write(fd, msg, 24);
 
-    char rbuf[64] = {};
-    ssize_t n = read(fd, rbuf, sizeof(rbuf) - 1);
-    if (n < 0) {
-        die("read");
-    }
-    printf("server says: %s\n", rbuf);
     close(fd);
     return 0;
 }
